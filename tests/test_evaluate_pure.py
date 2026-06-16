@@ -7,8 +7,11 @@ trading-engine core types — exactly what external plugin authors will do.
 from __future__ import annotations
 
 import datetime
+import json
+import logging
 import unittest
 from typing import Any
+from unittest.mock import MagicMock
 
 from trading_engine.core.strategy import StrategySideEffects
 from trading_engine.core.types import MarketSnapshot, PositionSnapshot, RiskGate
@@ -117,36 +120,85 @@ class TestEvaluatePure(unittest.TestCase):
         # Either None or an entry — the point is reset worked without error
         self.assertIsInstance(sig2, (type(None), object))  # basic smoke
 
-    def test_trend_veto_produces_no_entry_and_audit_side_effect_is_logged(self) -> None:
-        """When trend filter is conceptually active and direction mismatches, no entry signal."""
-        # Use a market that would otherwise satisfy pullback but has opposing trend
-        mkt = _make_market(
-            price=18006.0,
-            vwap=18005.0,
-            vol_1s=30,
-            buy_vol_1s=10,
-            sell_vol_1s=20,
-            trend_dir="Short",
-            trend_strength=2.5,
-        )
-        # First activate momentum Long (high buy vol on a previous tick conceptually)
-        # For pure test we simulate by manually calling internal activate is not public,
-        # so we rely on the fact that a counter-trend pullback tick with active momentum
-        # would be vetoed if we could reach that state. Here we simply assert evaluate
-        # respects a clear counter-trend risk gate scenario by returning no signal.
+    def test_trend_veto_emits_signal_audit_when_filter_blocks_pullback(self) -> None:
+        """P2: end-to-end trend_veto — active Long momentum + counter HTF → audit, no entry."""
+
+        class _TrendOn:
+            def live_get(self, name: str, default: Any = None) -> Any:
+                if name == "TREND_FILTER_ENABLED":
+                    return True
+                if name == "ENTRY_BAND_POINTS":
+                    return 2.0
+                if name == "EXHAUSTION_VOL":
+                    return 15
+                if name == "MOMENTUM_TIMEOUT_SEC":
+                    return 180
+                return default
+
+            entry_band_points = 2.0
+            exhaustion_vol = 15
+            trend_filter_enabled = True
+            max_consecutive_loss = 10
+            min_atr_threshold = 0.0
+            momentum_timeout_sec = 180
+            atr_trailing_enabled = False
+            atr_vwap_stop_enabled = False
+            trail_points_floor = 0.0
+            trail_atr_k = 0.0
+            vwap_stop_points_floor = 0.0
+            vwap_stop_atr_k = 0.0
+            flatten_slippage_points = 0
+            hard_stop_points = 10.0
+            fixed_tp_points = 20.0
+            trail_points = 8.0
+            vwap_stop_points = 3.0
+            exit_grace_ticks = 60
+            exit_grace_sec = 30
+            momentum_buy_ratio = 0.8
+            momentum_sell_ratio = 0.8
+
+        obs = MagicMock()
+        params = StrategyParams(_cfg=_TrendOn())  # type: ignore[arg-type]
+        strategy = VWAPMomentumStrategy(params=params, obs=obs)
         risk = _make_risk()
         pos = _make_flat_position()
 
-        sig, effects = self.strategy.evaluate(
-            mkt,
-            pos,
-            risk,
-            self.vol_threshold,
-            session_force_flatten_time=datetime.time(13, 45),
-            max_daily_loss_points=150.0,
+        activate_ts = 1_700_000_100
+        strategy.activate_momentum("Long", 18010.0, activate_ts)
+        pullback_mkt = _make_market(
+            ts=activate_ts + 2,
+            price=18005.5,
+            vwap=18005.0,
+            vol_1s=5,
+            buy_vol_1s=3,
+            sell_vol_1s=2,
+            trend_dir="Short",
+            trend_strength=2.5,
+            current_atr=9.0,
         )
+
+        with self.assertLogs("strategy_vwap_momentum.strategy", level=logging.INFO) as cap:
+            sig, _ = strategy.evaluate(
+                pullback_mkt,
+                pos,
+                risk,
+                self.vol_threshold,
+                session_force_flatten_time=datetime.time(13, 45),
+                max_daily_loss_points=150.0,
+            )
+
         self.assertIsNone(sig)
-        self.assertIsInstance(effects, StrategySideEffects)
+        obs.record_trend_veto.assert_called_once()
+        audit_lines = [
+            line for line in cap.output if "SIGNAL_AUDIT" in line
+        ]
+        self.assertEqual(len(audit_lines), 1)
+        payload = json.loads(audit_lines[0].split("SIGNAL_AUDIT ", 1)[1])
+        self.assertEqual(payload["reason"], "trend_veto")
+        self.assertEqual(payload["intent"], "entry")
+        self.assertEqual(payload["direction"], "Buy")
+        self.assertEqual(payload["trend_dir"], "Short")
+        self.assertGreater(payload["trend_strength"], 0.0)
 
     def test_block_new_entry_and_pending_gates_return_none(self) -> None:
         mkt = _make_market()

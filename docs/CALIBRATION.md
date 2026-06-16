@@ -99,7 +99,7 @@ Decision reads `StrategyParams.from_config()` — sweep must patch config namesp
 
 | Class | Status | Tests |
 |-------|--------|-------|
-| A (1～5) | ✅ | `test_trend.py`, `test_evaluate_pure.py` (trend_veto), app `test_trend_calibration.py` |
+| A (1～5) | ✅ | `test_trend.py`, `test_evaluate_pure.py` (`test_trend_veto_emits_signal_audit_*`), app `test_trend_calibration.py` |
 | B (6～8) | ✅ tooling / ☐ UAT data | `calibration_cli` + replay sweep; human Go/No-Go after ≥5 UAT days |
 
 ---

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "strategy-vwap-momentum"
+version = "0.1.0"
+description = "VWAP momentum reference strategy plugin for trading-engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "trading-engine>=0.1",
+]
+
+[project.entry-points."trading_engine.strategies"]
+vwap_momentum = "strategy_vwap_momentum:VWAPMomentumStrategy"
+
+[tool.setuptools.packages.find]
+where = ["src"]

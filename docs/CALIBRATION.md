@@ -2,7 +2,8 @@
 
 > **Owner**: `strategy-vwap-momentum`  
 > **App orchestration**: [trading-app SWEEP_SPEC](https://github.com/timhwchuang/trading-app/blob/main/docs/SWEEP_SPEC.md)  
-> **Open item**: B-class (6～8) — requires UAT tick accumulation
+> **B-class tooling**: `trading-app` `python -m reporting.calibration_cli` (log + tick_cache replay)  
+> **Human gate**: CAL-8 Go/No-Go still requires ≥5 UAT days of real ticks + sign-off
 
 Workflow for calibrating `trend_min_strength` and related flags **before** enabling `trend_filter_enabled` in production config.
 
@@ -26,22 +27,46 @@ Workflow for calibrating `trend_min_strength` and related flags **before** enabl
 
 ### 2. Harness (CAL-2)
 
-Use `trading-app` `reporting/trend_calibration.py`:
+**CLI (B-class, recommended)**:
 
-```python
-compute_trend_veto_calibration(veto_audits, allowed_audits, get_forward_pnl=...)
+```powershell
+cd trading-app
+python -m reporting.calibration_cli logs/uat.log `
+  --dates 2026-06-10,2026-06-11,2026-06-12 `
+  --cache-dir tick_cache `
+  --forward-seconds 1800
 ```
 
-Outputs: `veto_rate`, `delta_expectancy`, forward PnL stats.
+**Library**:
+
+```python
+from reporting.trend_calibration import run_b_class_calibration
+from reporting.forward_pnl import ForwardPnlPolicy
+
+run_b_class_calibration(
+    log_paths=[Path("logs/uat.log")],
+    code="TXFR1",
+    dates=[...],
+    forward_policy=ForwardPnlPolicy(window_seconds=1800),
+)
+```
+
+Outputs: `veto_rate`, `delta_expectancy`, `forward_policy`, tick count.
 
 - A-class: synthetic scenarios in `tests/reporting/test_trend_calibration.py`
-- B-class: real log parse + tick replay `get_forward_pnl`
+- B-class: `reporting/forward_pnl.py` tick replay → real `get_forward_pnl`
 
 ### 3. Sweep (CAL-3)
 
-Grid includes `trend_*` keys; `param_sweep` attaches `veto_metrics` per run.
+```powershell
+python -m reporting.calibration_cli logs/uat.log `
+  --dates 2026-06-10,2026-06-11,2026-06-12 `
+  --sweep --sweep-output sweep_result.jsonl
+```
 
-Sensitivity table for `trend_min_strength`: 0.0, 0.3, 0.5, 0.8, 1.0, 1.5 (ATR units).
+Or `sweep.param_sweep.sweep(..., forward_policy=ForwardPnlPolicy(...))` — when `forward_policy` is set and tick_cache exists, `veto_metrics.delta_expectancy` uses replay (not toy 0).
+
+Default `trend_min_strength` grid: 0.0, 0.3, 0.5, 0.8, 1.0, 1.5 (ATR units).
 
 Sort by valid-set survival KPI (net expectancy, MDD penalty); veto metrics are advisory.
 
@@ -75,7 +100,7 @@ Decision reads `StrategyParams.from_config()` — sweep must patch config namesp
 | Class | Status | Tests |
 |-------|--------|-------|
 | A (1～5) | ✅ | `test_trend.py`, `test_evaluate_pure.py` (trend_veto), app `test_trend_calibration.py` |
-| B (6～8) | ☐ UAT tick | Real harness + sensitivity table + human sign-off |
+| B (6～8) | ✅ tooling / ☐ UAT data | `calibration_cli` + replay sweep; human Go/No-Go after ≥5 UAT days |
 
 ---
 

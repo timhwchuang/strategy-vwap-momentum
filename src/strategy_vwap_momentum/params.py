@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
-from trading_engine.core.runtime_config import RuntimeConfig, SWEEP_FIELD_TO_CONST
+from trading_engine.core.runtime_config import SWEEP_FIELD_TO_CONST, RuntimeConfig
 
 SWEEPABLE_PARAMS = frozenset(SWEEP_FIELD_TO_CONST.values())
 
@@ -97,6 +98,23 @@ class StrategyParams:
         return bool(self._live("TREND_FILTER_ENABLED", "trend_filter_enabled"))
 
     @property
+    def momentum_timeout_sec(self) -> int:
+        """Momentum episode max lifetime (seconds) before auto-reset.
+
+        While momentum is active we wait for a qualifying pullback. If no entry
+        signal is generated within this window we abandon the momentum state.
+        This prevents hanging in a "momentum detected but never pulled back"
+        situation for the whole session.
+
+        Config key: MOMENTUM_TIMEOUT_SEC (overlay supported for sweep/calibration).
+        Default: 180 (when not present in base Settings yet).
+        """
+        try:
+            return int(self._live("MOMENTUM_TIMEOUT_SEC", "momentum_timeout_sec"))
+        except (AttributeError, TypeError):
+            return 180
+
+    @property
     def flatten_slippage_points(self) -> int:
         return int(self._live("FLATTEN_SLIPPAGE_POINTS", "flatten_slippage_points"))
 
@@ -111,9 +129,7 @@ def sweepable_value(name: str, cfg: RuntimeConfig | None = None) -> Any:
     return cfg.live_get(name, getattr(cfg, name.lower(), None))
 
 
-def apply_strategy_params(
-    params: dict[str, Any], cfg: RuntimeConfig
-) -> dict[str, Any]:
+def apply_strategy_params(params: dict[str, Any], cfg: RuntimeConfig) -> dict[str, Any]:
     return cfg.apply_overlay(params)
 
 
@@ -122,9 +138,7 @@ def restore_strategy_params(saved: dict[str, Any], cfg: RuntimeConfig) -> None:
 
 
 @contextmanager
-def patch_strategy_params(
-    params: dict[str, Any], cfg: RuntimeConfig
-) -> Iterator[RuntimeConfig]:
+def patch_strategy_params(params: dict[str, Any], cfg: RuntimeConfig) -> Iterator[RuntimeConfig]:
     saved = cfg.apply_overlay(params)
     try:
         yield cfg

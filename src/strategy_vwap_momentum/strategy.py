@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import datetime
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 from trading_engine.core.audit.signal_audit import SignalAudit, format_signal_audit
 from trading_engine.core.strategy import BaseStrategy
@@ -26,14 +27,19 @@ from strategy_vwap_momentum.trend import (
 
 logger = logging.getLogger(__name__)
 
-MOMENTUM_TIMEOUT_SEC = 180
-
 
 @dataclass
 class MomentumState:
+    """Internal momentum episode state (strictly private to this plugin).
+
+    - `active` + `direction` + `trigger_time` drive the two-phase (activate → pullback) logic
+      and the  momentum timeout.
+    - `peak` was historical (used to track extreme during wait for pullback) but was never
+      read for any decision or audit. It has been removed as dead code (see CodeReview#1).
+    """
+
     active: bool = False
     direction: str = "None"
-    peak: float = 0.0
     trigger_time: int = 0
 
 
@@ -65,18 +71,11 @@ class VWAPMomentumStrategy(BaseStrategy):
         self.momentum = MomentumState(
             active=True,
             direction=direction,
-            peak=price,
             trigger_time=ts,
         )
         if self.obs is not None:
             self.obs.record_momentum_trigger()
         logger.info("MOMENTUM %s 突破 | 價格 %.1f", direction, price)
-
-    def update_momentum_peak(self, price: float) -> None:
-        if self.momentum.direction == "Long":
-            self.momentum.peak = max(self.momentum.peak, price)
-        elif self.momentum.direction == "Short":
-            self.momentum.peak = min(self.momentum.peak, price)
 
     def evaluate(
         self,
@@ -88,11 +87,11 @@ class VWAPMomentumStrategy(BaseStrategy):
         session_force_flatten_time: datetime.time,
         max_daily_loss_points: float,
         on_daily_loss_block: Callable[[], None] | None = None,
-    ) -> tuple[Optional[OrderSignal], StrategySideEffects]:
+    ) -> tuple[OrderSignal | None, StrategySideEffects]:
         effects = StrategySideEffects()
 
-        if not position.has_position and self.momentum.active:
-            self.update_momentum_peak(market.price)
+        # Tiny defensive normalization (low priority per review)
+        trend_dir = market.trend_dir if market.trend_dir in ("Long", "Short", "Flat") else "Flat"
 
         if not risk.api_connected:
             if position.has_position:
@@ -110,10 +109,7 @@ class VWAPMomentumStrategy(BaseStrategy):
         if not risk.in_trading_session:
             return None, effects
 
-        if (
-            risk.daily_pnl <= -max_daily_loss_points
-            and not risk.block_new_entry
-        ):
+        if risk.daily_pnl <= -max_daily_loss_points and not risk.block_new_entry:
             effects.block_new_entry = True
             if on_daily_loss_block is not None:
                 on_daily_loss_block()
@@ -135,12 +131,35 @@ class VWAPMomentumStrategy(BaseStrategy):
             return None, effects
 
         if not self.momentum.active:
-            signal = self._try_activate_momentum(market, vol_threshold)
-            return signal, effects
+            self._try_activate_momentum(market, vol_threshold)
+            return None, effects
 
-        if market.ts - self.momentum.trigger_time > MOMENTUM_TIMEOUT_SEC:
+        timeout_sec = self.params.momentum_timeout_sec
+        if market.ts - self.momentum.trigger_time > timeout_sec:
             if self.obs is not None:
                 self.obs.record_momentum_timeout()
+
+            direction = self.momentum.direction
+            audit_dir = "Buy" if direction == "Long" else "Sell"
+            timeout_audit = SignalAudit(
+                intent="entry",
+                direction=audit_dir,
+                price=market.price,
+                ts=market.ts,
+                reason="momentum_timeout",
+                trend_dir=trend_dir,
+                trend_strength=market.trend_strength,
+            )
+            logging.getLogger(__name__).info(
+                "SIGNAL_AUDIT %s", format_signal_audit(timeout_audit)
+            )
+
+            logger.info(
+                "MOMENTUM %s timeout | elapsed=%ds > %ds (reset)",
+                direction,
+                market.ts - self.momentum.trigger_time,
+                timeout_sec,
+            )
             self.reset_momentum()
             return None, effects
 
@@ -151,13 +170,14 @@ class VWAPMomentumStrategy(BaseStrategy):
         market: MarketSnapshot,
         vol_threshold: tuple[float, float, float],
     ) -> None:
+        """Side-effect only: attempts to activate internal momentum state.
+
+        Never produces an OrderSignal on the activation tick (call site no longer
+        assigns the return value -- type polish for the previous `signal = ...` smell).
+        """
         base_vol, multiplier, threshold = vol_threshold
-        buy_ratio = (
-            market.buy_vol_1s / market.vol_1s if market.vol_1s > 0 else 0
-        )
-        sell_ratio = (
-            market.sell_vol_1s / market.vol_1s if market.vol_1s > 0 else 0
-        )
+        buy_ratio = market.buy_vol_1s / market.vol_1s if market.vol_1s > 0 else 0
+        sell_ratio = market.sell_vol_1s / market.vol_1s if market.vol_1s > 0 else 0
 
         if market.vol_1s >= threshold and buy_ratio >= self.params.momentum_buy_ratio:
             logger.info(
@@ -170,10 +190,7 @@ class VWAPMomentumStrategy(BaseStrategy):
                 buy_ratio,
             )
             self.activate_momentum("Long", market.price, market.ts)
-        elif (
-            market.vol_1s >= threshold
-            and sell_ratio >= self.params.momentum_sell_ratio
-        ):
+        elif market.vol_1s >= threshold and sell_ratio >= self.params.momentum_sell_ratio:
             logger.info(
                 "MOMENTUM 量能通過 | dir=Short vol_1s=%d base=%.0f mult=%.2f "
                 "threshold=%.0f sell_ratio=%.2f",
@@ -184,13 +201,13 @@ class VWAPMomentumStrategy(BaseStrategy):
                 sell_ratio,
             )
             self.activate_momentum("Short", market.price, market.ts)
-        return None
+        # implicit None -- activation is purely side-effecting
 
     def _try_pullback_entry(
         self,
         market: MarketSnapshot,
         vol_threshold: tuple[float, float, float],
-    ) -> Optional[OrderSignal]:
+    ) -> OrderSignal | None:
         near_vwap = abs(market.price - market.vwap) <= self.params.entry_band_points
         exhausted = market.vol_1s <= self.params.exhaustion_vol
         if self.obs is not None:
@@ -204,9 +221,14 @@ class VWAPMomentumStrategy(BaseStrategy):
         if not (near_vwap and exhausted):
             return None
 
+        trend_dir = (
+            market.trend_dir
+            if market.trend_dir in ("Long", "Short", "Flat")
+            else "Flat"
+        )
         if not trend_allows_entry(
             enabled=self.params.trend_filter_enabled,
-            trend_dir=market.trend_dir,
+            trend_dir=trend_dir,
             momentum_dir=self.momentum.direction,
         ):
             # Vetoed by HTF trend filter. Record for calibration.
@@ -220,12 +242,8 @@ class VWAPMomentumStrategy(BaseStrategy):
 
             direction = self.momentum.direction
             audit_dir = "Buy" if direction == "Long" else "Sell"
-            buy_ratio = (
-                market.buy_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
-            )
-            sell_ratio = (
-                market.sell_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
-            )
+            buy_ratio = market.buy_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
+            sell_ratio = market.sell_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
             veto_audit = SignalAudit(
                 intent="entry",
                 direction=audit_dir,
@@ -237,12 +255,10 @@ class VWAPMomentumStrategy(BaseStrategy):
                 atr=round(market.current_atr, 2),
                 vwap=round(market.vwap, 1),
                 reason="trend_veto",
-                trend_dir=market.trend_dir,
+                trend_dir=trend_dir,
                 trend_strength=market.trend_strength,
             )
-            logging.getLogger(__name__).info(
-                "SIGNAL_AUDIT %s", format_signal_audit(veto_audit)
-            )
+            logging.getLogger(__name__).info("SIGNAL_AUDIT %s", format_signal_audit(veto_audit))
             return None
 
         if self.obs is not None:
@@ -258,9 +274,7 @@ class VWAPMomentumStrategy(BaseStrategy):
             market.price,
             "entry",
             exchange_ts=market.ts,
-            audit=self.build_entry_audit(
-                market, audit_dir, multiplier, threshold
-            ),
+            audit=self.build_entry_audit(market, audit_dir, multiplier, threshold),
         )
 
     def build_entry_audit(
@@ -270,12 +284,8 @@ class VWAPMomentumStrategy(BaseStrategy):
         multiplier: float,
         vol_threshold: float,
     ) -> SignalAudit:
-        buy_ratio = (
-            market.buy_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
-        )
-        sell_ratio = (
-            market.sell_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
-        )
+        buy_ratio = market.buy_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
+        sell_ratio = market.sell_vol_1s / market.vol_1s if market.vol_1s > 0 else 0.0
         return SignalAudit(
             intent="entry",
             direction=direction,
@@ -363,22 +373,16 @@ class VWAPMomentumStrategy(BaseStrategy):
 
     def manage_exit(
         self, market: MarketSnapshot, position: PositionSnapshot
-    ) -> tuple[Optional[OrderSignal], StrategySideEffects]:
+    ) -> tuple[OrderSignal | None, StrategySideEffects]:
+        # Tiny defensive normalization (low priority per review)
+        pos_dir = position.position_dir if position.position_dir in ("Long", "Short", "Flat") else "Flat"
         trail_pts = self._effective_trail_points(market.current_atr)
-        if position.position_dir == "Long":
-            sl_hit, sl_reason = self._stop_loss_hit(
-                market, position, is_long=True
-            )
+        if pos_dir == "Long":
+            sl_hit, sl_reason = self._stop_loss_hit(market, position, is_long=True)
             tp_hit = market.price >= position.entry_price + self.params.fixed_tp_points
             trail_hit = market.price <= position.trailing_peak - trail_pts
             if sl_hit or tp_hit or trail_hit:
-                reason = (
-                    sl_reason
-                    if sl_hit
-                    else "take_profit"
-                    if tp_hit
-                    else "trailing_stop"
-                )
+                reason = sl_reason if sl_hit else "take_profit" if tp_hit else "trailing_stop"
                 return (
                     OrderSignal(
                         "Sell",
@@ -392,20 +396,12 @@ class VWAPMomentumStrategy(BaseStrategy):
                     ),
                     StrategySideEffects(),
                 )
-        elif position.position_dir == "Short":
-            sl_hit, sl_reason = self._stop_loss_hit(
-                market, position, is_long=False
-            )
+        elif pos_dir == "Short":
+            sl_hit, sl_reason = self._stop_loss_hit(market, position, is_long=False)
             tp_hit = market.price <= position.entry_price - self.params.fixed_tp_points
             trail_hit = market.price >= position.trailing_peak + trail_pts
             if sl_hit or tp_hit or trail_hit:
-                reason = (
-                    sl_reason
-                    if sl_hit
-                    else "take_profit"
-                    if tp_hit
-                    else "trailing_stop"
-                )
+                reason = sl_reason if sl_hit else "take_profit" if tp_hit else "trailing_stop"
                 return (
                     OrderSignal(
                         "Buy",
@@ -426,7 +422,7 @@ class VWAPMomentumStrategy(BaseStrategy):
         market: MarketSnapshot,
         position: PositionSnapshot,
         session_force_flatten_time: datetime.time,
-    ) -> tuple[Optional[OrderSignal], StrategySideEffects]:
+    ) -> tuple[OrderSignal | None, StrategySideEffects]:
         action = "Sell" if position.position_dir == "Long" else "Buy"
         logger.warning(
             "收盤強制平倉 | %s @ %.1f | force_flatten_time=%s",
@@ -442,9 +438,7 @@ class VWAPMomentumStrategy(BaseStrategy):
                 "exit",
                 exchange_ts=market.ts,
                 slippage_points=self.params.flatten_slippage_points,
-                audit=self.build_exit_audit(
-                    market, action, "session_force_flatten"
-                ),
+                audit=self.build_exit_audit(market, action, "session_force_flatten"),
             ),
             StrategySideEffects(),
         )

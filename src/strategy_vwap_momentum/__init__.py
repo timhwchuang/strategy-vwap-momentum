@@ -1,5 +1,9 @@
-"""VWAP momentum strategy plugin."""
+"""VWAP momentum strategy plugin (reference implementation for trading-engine).
 
+Version and public surface are re-exported here for convenience.
+"""
+
+from strategy_vwap_momentum._version import __version__
 from strategy_vwap_momentum.params import (
     SWEEPABLE_PARAMS,
     StrategyParams,
@@ -29,4 +33,7 @@ __all__ = [
     "restore_strategy_params",
     "sweepable_value",
     "trend_allows_entry",
+    "__version__",
 ]
+
+__version__ = __version__  # re-export at package level (consistent with trading-engine)

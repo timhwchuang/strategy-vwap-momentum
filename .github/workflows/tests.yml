@@ -1,0 +1,55 @@
+name: Strategy tests (vwap-momentum reference)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install trading-engine (pinned) + self + dev tools
+        run: |
+          python -m pip install "trading-engine @ git+https://github.com/timhwchuang/trading-engine.git@v0.2.0"
+          python -m pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src tests
+
+      - name: Ruff format check
+        run: ruff format --check src tests
+
+      - name: Mypy (gradual, non-blocking)
+        run: mypy src/strategy_vwap_momentum/strategy.py src/strategy_vwap_momentum/params.py src/strategy_vwap_momentum/trend.py || true
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install trading-engine (pinned) + editable strategy
+        run: |
+          python -m pip install "trading-engine @ git+https://github.com/timhwchuang/trading-engine.git@v0.2.0"
+          python -m pip install -e .
+
+      - name: Run strategy tests
+        run: python run_tests.py

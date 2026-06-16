@@ -24,7 +24,7 @@ P6-1-CAL-4 命名誠實化：
 
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from collections.abc import Sequence
 
 
 def ema(values: Sequence[float], period: int) -> float | None:
@@ -116,9 +116,7 @@ def trend_from_ema(closes: Sequence[float], period: int) -> tuple[str, float]:
     return "Flat", 0.0
 
 
-def trend_from_slope(
-    closes: Sequence[float], min_slope: float
-) -> tuple[str, float]:
+def trend_from_slope(closes: Sequence[float], min_slope: float) -> tuple[str, float]:
     """Linear regression slope on resampled higher-timeframe closes.
 
     This is *price* slope (no volume, not VWAP). Positive slope = Long bias.

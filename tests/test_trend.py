@@ -30,16 +30,8 @@ class TestTrendHelpers(unittest.TestCase):
         self.assertGreater(strength, 0)
 
     def test_trend_filter_blocks_counter(self):
-        self.assertFalse(
-            trend_allows_entry(
-                enabled=True, trend_dir="Long", momentum_dir="Short"
-            )
-        )
-        self.assertTrue(
-            trend_allows_entry(
-                enabled=True, trend_dir="Long", momentum_dir="Long"
-            )
-        )
+        self.assertFalse(trend_allows_entry(enabled=True, trend_dir="Long", momentum_dir="Short"))
+        self.assertTrue(trend_allows_entry(enabled=True, trend_dir="Long", momentum_dir="Long"))
 
     def test_resample_closes_5m(self):
         closes = [float(i) for i in range(10)]
@@ -58,17 +50,13 @@ class TestTrendHelpers(unittest.TestCase):
 
     def test_compute_trend_ema_mode(self):
         closes = [100.0 + i for i in range(60)]
-        direction, strength = compute_trend(
-            closes, mode="ema", timeframe_min=5, ema_period=10
-        )
+        direction, strength = compute_trend(closes, mode="ema", timeframe_min=5, ema_period=10)
         self.assertEqual(direction, "Long")
         self.assertGreater(strength, 0)
 
     def test_compute_trend_slope_mode(self):
         closes = [100.0 + i for i in range(30)]
-        direction, _ = compute_trend(
-            closes, mode="slope", timeframe_min=1, slope_min=0.1
-        )
+        direction, _ = compute_trend(closes, mode="slope", timeframe_min=1, slope_min=0.1)
         self.assertEqual(direction, "Long")
         flat, _ = trend_from_slope([100.0, 100.1], min_slope=1.0)
         self.assertEqual(flat, "Flat")
@@ -249,9 +237,9 @@ class TestTrendHelpers(unittest.TestCase):
         This proves "未切片輸入會產生錯誤 regime" under the conditions the hygiene matters (sparse recent day at open).
         """
         import datetime as dt_mod
+
         from trading_engine.calendar.taifex import (
             select_recent_trading_days_closes,
-            trading_day_for_daily_reset,
         )
 
         # Build fake "kbars raw" spanning two trading days with ts (ns epoch style).
@@ -305,4 +293,3 @@ class TestTrendHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

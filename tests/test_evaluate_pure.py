@@ -29,6 +29,8 @@ def _make_risk(
     cooldown_active: bool = False,
     force_flatten: bool = False,
     api_connected: bool = True,
+    atr_stale: bool = False,
+    reconnect_warmup_active: bool = False,
     daily_pnl: float = 0.0,
     consecutive_loss: int = 0,
 ) -> RiskGate:
@@ -41,6 +43,8 @@ def _make_risk(
         block_new_entry=block_new_entry,
         force_flatten=force_flatten,
         api_connected=api_connected,
+        atr_stale=atr_stale,
+        reconnect_warmup_active=reconnect_warmup_active,
         daily_pnl=daily_pnl,
         consecutive_loss=consecutive_loss,
     )
@@ -283,6 +287,30 @@ class TestEvaluatePure(unittest.TestCase):
         )
         self.assertIsNone(sig)
         self.assertFalse(strategy.momentum.active)  # reset happened
+
+    def test_atr_stale_blocks_flat_entry(self) -> None:
+        risk = _make_risk(atr_stale=True)
+        sig, _ = self.strategy.evaluate(
+            _make_market(),
+            _make_flat_position(),
+            risk,
+            self.vol_threshold,
+            session_force_flatten_time=datetime.time(13, 45),
+            max_daily_loss_points=150.0,
+        )
+        self.assertIsNone(sig)
+
+    def test_reconnect_warmup_blocks_flat_entry(self) -> None:
+        risk = _make_risk(reconnect_warmup_active=True)
+        sig, _ = self.strategy.evaluate(
+            _make_market(),
+            _make_flat_position(),
+            risk,
+            self.vol_threshold,
+            session_force_flatten_time=datetime.time(13, 45),
+            max_daily_loss_points=150.0,
+        )
+        self.assertIsNone(sig)
 
 
 if __name__ == "__main__":

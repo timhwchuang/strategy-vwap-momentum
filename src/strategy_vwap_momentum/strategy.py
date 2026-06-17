@@ -102,6 +102,15 @@ class VWAPMomentumStrategy(BaseStrategy):
                 return self.manage_exit(market, position)
             return None, effects
 
+        if risk.reconnect_warmup_active or risk.atr_stale:
+            if position.has_position:
+                if risk.force_flatten:
+                    return self.session_force_flatten_signal(
+                        market, position, session_force_flatten_time
+                    )
+                return self.manage_exit(market, position)
+            return None, effects
+
         if risk.is_pending or risk.exit_pending:
             return None, effects
         if risk.cooldown_active:

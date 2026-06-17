@@ -1,3 +1,6 @@
+> **此 repo 已封存（Archived）。** 開發已移至 monorepo [**tfx-trading**](https://github.com/timhwchuang/tfx-trading) → [`packages/strategies/vwap-momentum`](https://github.com/timhwchuang/tfx-trading/tree/main/packages/strategies/vwap-momentum)。  
+> 歷史 tag / release 仍可使用，**不再更新**。請改 `git clone git@github.com:timhwchuang/tfx-trading.git`。
+
 # strategy-vwap-momentum
 
 **Reference VWAP momentum + higher-timeframe trend filter strategy plugin for `trading-engine`.**

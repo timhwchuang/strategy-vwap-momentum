@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "strategy-vwap-momentum"
-version = "0.1.1"
+version = "0.1.2"
 description = "Reference VWAP momentum + trend-filter strategy plugin for trading-engine (first strategy-<name> package)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,7 +24,7 @@ classifiers = [
   "Topic :: Office/Business :: Financial :: Investment",
 ]
 dependencies = [
-    "trading-engine>=0.2.0,<1.0",
+    "trading-engine>=0.2.2,<1.0",
 ]
 
 [project.optional-dependencies]

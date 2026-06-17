@@ -19,24 +19,24 @@
 
 ## Status
 
-**0.1.0 實驗 / 參考期** — 作為第一套公開 strategy plugin，API 與參數校準仍可能調整。強烈建議搭配 trading-engine v0.2.0 使用。
+**0.1.2** — 參考 strategy plugin；搭配 **trading-engine v0.2.2+**（`atr_stale` / reconnect warmup gates）。
 
 ## Install（GitHub only，不上 PyPI）
 
 ```bash
 # 鎖定 tag（建議）
-pip install "strategy-vwap-momentum @ git+https://github.com/timhwchuang/strategy-vwap-momentum.git@v0.1.0"
+pip install "strategy-vwap-momentum @ git+https://github.com/timhwchuang/strategy-vwap-momentum.git@v0.1.2"
 
 # 搭配 trading-engine（通常一起鎖）
-pip install "trading-engine @ git+https://github.com/timhwchuang/trading-engine.git@v0.2.0"
+pip install "trading-engine @ git+https://github.com/timhwchuang/trading-engine.git@v0.2.2"
 ```
 
 在你的 app / backtest repo 的 `pyproject.toml`：
 
 ```toml
 dependencies = [
-  "trading-engine @ git+https://github.com/timhwchuang/trading-engine.git@v0.2.0",
-  "strategy-vwap-momentum @ git+https://github.com/timhwchuang/strategy-vwap-momentum.git@v0.1.0",
+  "trading-engine @ git+https://github.com/timhwchuang/trading-engine.git@v0.2.2",
+  "strategy-vwap-momentum @ git+https://github.com/timhwchuang/strategy-vwap-momentum.git@v0.1.2",
 ]
 ```
 

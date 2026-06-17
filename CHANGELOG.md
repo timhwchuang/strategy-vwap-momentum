@@ -4,6 +4,18 @@ All notable changes to `strategy-vwap-momentum` are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 Versioning follows [SemVer](https://semver.org/) (0.x = API may still evolve; compatible with trading-engine 0.x).
 
+## [0.1.2] - 2026-06-17
+
+### Added
+
+- Block new entries when `RiskGate.atr_stale` or `RiskGate.reconnect_warmup_active` (exits unchanged).
+
+### Changed
+
+- Depends on `trading-engine>=0.2.2,<1.0`.
+
+[0.1.2]: https://github.com/timhwchuang/strategy-vwap-momentum/releases/tag/v0.1.2
+
 ## [0.1.1] - 2026-06-16
 
 ### Fixed
